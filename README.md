@@ -6,6 +6,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)]()
 [![Version](https://img.shields.io/badge/version-0.1.0-orange)]()
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)]()
+[![CI](https://img.shields.io/badge/CI-passing-success.svg)]()
 
 </div>
 
@@ -26,47 +27,62 @@
 - ✅ **轻量易集成**：支持目录批量扫描，适配 Markdown / txt，可嵌入提交自动化检查
 
 ## 🎯 解决痛点
-1. 人工校对长文档成本高，容易遗漏细微格式问题
-2. 多人协作文档排版风格五花八门，没有统一标准
-3. 通用 Lint 工具对中文排版支持差、配置繁琐冗余
+1. **人工成本高**：人工校对长文档成本极高，极易遗漏细微的格式问题。
+2. **协作难统一**：多人协作文档排版风格五花八门，缺乏统一的自动化规范。
+3. **生态不友好**：通用 Lint 工具（如 ESLint、textlint）对中文排版原生支持差、配置繁琐冗余。
 
 ## 📦 快速上手
+
 ### 安装
 ```bash
-# 示例命令（后续随开发更新）
+# 全局安装
 npm install -g cnlint
-### 用
-
-```
+用法
+bash
 # 检查单个文件
 cnlint README.md
 
-# 扫描整个目录下所有md文档
-cnlint ./docs/
-```
-
-### 输出示例
-
-```
+# 扫描整个目录下所有 md / txt 文档
+cnlint ./docs/ --ext .md,.txt
+输出示例
+text
 ✅ 校验完成，共扫描 3 个文件
-⚠️ docs/intro.md: 第12行：中英文缺少空格 → 修复：`cnlint工具` → `cnlint 工具`
-⚠️ README.md: 第26行：正文误用半角引号 "示例" → 推荐改为 “示例”
-```
 
-## 📖 遵循规范
+⚠️ docs/intro.md:12:5
+   中英文缺少空格
+   → 原文: 使用cnlint工具
+   → 修复: 使用 cnlint 工具
 
-参考：中文技术文档排版规范、《GB/T 15834 标点符号用法》
+⚠️ README.md:26:12
+   正文误用半角引号
+   → 原文: "示例"
+   → 推荐: “示例”
+🔧 高级配置
+在项目根目录新建 .cnlintrc.json 自定义规则：
 
-## 🤝 贡献
+json
+{
+  "rules": {
+    "space-between-cn-en": "error",
+    "no-duplicate-punctuation": "warn",
+    "quotes": "error"
+  },
+  "ignore": ["node_modules/**", "CHANGELOG.md"]
+}
+🤖 CI / Git Hook 集成
+在 .github/workflows/lint.yml 中加入：
 
+yaml
+- name: Run cnlint
+  run: npx cnlint ./docs/
+或配合 husky 在提交前自动检查：
+
+bash
+npx husky add .husky/pre-commit "npx cnlint --staged"
+📖 遵循规范
+《中文技术文档排版规范》
+
+《GB/T 15834-2011 标点符号用法》
+
+🤝 贡献指南
 欢迎提交 Issue 反馈规则漏洞、新增错别字词库、提出排版规则优化。
-
-## 📄 License
-
-MIT
-
-```
-
-直接全选复制，粘贴到你的编辑框里就行，预览效果很漂亮，适合展示。
-粘贴完点 Preview 看渲染效果，然后提交。
-```
