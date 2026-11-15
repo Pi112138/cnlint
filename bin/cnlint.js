@@ -297,36 +297,70 @@ export async function run(argv, io = {}) {
     stdout(`🤖 语义审校：${parts.join('，')}\n`);
   }
 
+  // ============ 修复模式：报告与修复分两块展示 ============
   if (opts.fix) {
-    if (fixedCount > 0) {
-      const verb = opts.dryRun ? '可修复' : '已自动修复';
-      stdout(`🔧 ${verb} ${fixedCount} 处问题，涉及 ${touchedFiles} 个文件\n`);
-      if (opts.dryRun) {
-        stdout('   （--dry-run 模式，未写入文件）\n');
-      }
-    } else {
-      stdout('🔧 没有可自动修复的问题\n');
-    }
-  }
+    const fixedReports = reports.filter((r) => (r.fixed ?? []).length > 0);
+    const remainingReports = reports.filter((r) => (r.remaining ?? []).length > 0);
+    const fixedVerb = opts.dryRun ? '可修复' : '已修复';
 
-  if (totalIssues > 0 || reports.some((r) => r.changed)) {
-    stdout('\n');
-    for (const report of reports) {
-      for (const issue of report.fixed ?? []) {
-        if (opts.dryRun) {
-          stdout(`🔧 ${report.display}:${issue.line}:${issue.column}\n`);
-          stdout(`   ${issue.message}\n`);
+    // ---- 第一块：已修复（或 dry-run 下将要修复） ----
+    if (fixedReports.length > 0) {
+      stdout(`\n🔧 ${fixedVerb} ${fixedCount} 处问题，涉及 ${touchedFiles} 个文件`);
+      if (opts.dryRun) stdout('（--dry-run，未写入文件）');
+      stdout('\n');
+      stdout('─'.repeat(60) + '\n');
+      for (const report of fixedReports) {
+        for (const issue of report.fixed) {
+          stdout(`  🔧 ${report.display}:${issue.line}:${issue.column}\n`);
+          stdout(`     ${issue.message}\n`);
           if (!opts.quiet) {
-            stdout(`   → 原文: ${issue.original}\n`);
-            stdout(`   → 修复: ${issue.suggestion}\n`);
+            stdout(`     ${issue.original} → ${issue.suggestion}\n`);
           }
-          stdout('\n');
         }
       }
-      for (const issue of report.remaining ?? report.issues ?? []) {
+    } else {
+      stdout('\n🔧 没有可自动修复的问题\n');
+    }
+
+    // ---- 第二块：仍需人工处理 ----
+    if (remainingReports.length > 0) {
+      const remainingTotal = remainingReports.reduce((n, r) => n + r.remaining.length, 0);
+      stdout(`\n⚠️ 仍需人工处理 ${remainingTotal} 处（无法自动修复）\n`);
+      stdout('─'.repeat(60) + '\n');
+      for (const report of remainingReports) {
+        for (const issue of report.remaining) {
+          const icon = issue.severity === 'error' ? '❌' : '⚠️';
+          stdout(`  ${icon} ${report.display}:${issue.line}:${issue.column}\n`);
+          // 消息里若已包含「原文 → 建议」，就不再重复展示
+          const inline = issue.message.includes('→');
+          stdout(`     ${issue.message}\n`);
+          if (!opts.quiet && !inline) {
+            stdout(`     ${issue.original} → 建议: ${issue.suggestion}\n`);
+          }
+        }
+      }
+    }
+
+    // ---- 小结 ----
+    stdout('\n' + '─'.repeat(60) + '\n');
+    if (fixedReports.length === 0 && remainingReports.length === 0) {
+      stdout('✨ 没有发现任何问题\n');
+    } else if (remainingReports.length === 0) {
+      stdout(`✨ 全部处理完毕：${fixedVerb} ${fixedCount} 处，无残留\n`);
+    } else {
+      stdout(`📋 汇总：${fixedVerb} ${fixedCount} 处，仍需人工处理 ${totalIssues} 处\n`);
+    }
+    return errorCount > 0 ? 1 : 0;
+  }
+
+  // ============ 仅检查模式：完整列出全部问题 ============
+  if (totalIssues > 0) {
+    stdout('\n');
+    for (const { display, issues } of reports) {
+      for (const issue of issues) {
         const icon = issue.severity === 'error' ? '❌' : '⚠️';
         const hint = issue.fixable ? '（可用 --fix 自动修复）' : '（需人工处理）';
-        stdout(`${icon} ${report.display}:${issue.line}:${issue.column}\n`);
+        stdout(`${icon} ${display}:${issue.line}:${issue.column}\n`);
         stdout(`   ${issue.message}${hint}\n`);
         if (!opts.quiet) {
           stdout(`   → 原文: ${issue.original}\n`);
@@ -335,21 +369,17 @@ export async function run(argv, io = {}) {
         stdout('\n');
       }
     }
-  }
-
-  if (opts.fix) {
-    if (totalIssues > 0) {
-      stdout(`仍有 ${totalIssues} 个问题需人工处理（error ${errorCount} 个）\n`);
-    } else if (fixedCount === 0) {
-      stdout('✨ 没有发现任何问题\n');
-    } else {
-      stdout('✨ 所有可自动修复的问题已处理完毕\n');
-    }
-  } else if (totalIssues > 0) {
     stdout(`共发现 ${totalIssues} 个问题（error ${errorCount} 个）\n`);
-    if (reports.some((r) => r.issues?.some((i) => i.fixable))) {
-      stdout('提示：其中部分问题可尝试用 --fix 自动修复\n');
+
+    const fixable = reports.reduce(
+      (n, r) => n + (r.issues ?? []).filter((i) => i.fixable).length,
+      0,
+    );
+    if (fixable > 0) {
+      stdout(`其中 ${fixable} 处可用 --fix 自动修复\n`);
     }
+  } else {
+    stdout('✨ 没有发现任何问题\n');
   }
 
   return errorCount > 0 ? 1 : 0;
