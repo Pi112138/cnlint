@@ -19,7 +19,7 @@ test('词典无「错词等于正词」的无效条目', () => {
 });
 
 test('词典词条数量充足', () => {
-  assert.ok(getTypoEntries().length >= 200, `实际 ${getTypoEntries().length} 条`);
+  assert.ok(getTypoEntries().length >= 400, `实际 ${getTypoEntries().length} 条`);
 });
 
 test('白名单中的词不应同时是词典词条', () => {
@@ -112,4 +112,74 @@ test('抽样校验：多个词条的正词写法不应被判错', () => {
   for (const right of rights) {
     assert.deepEqual(spell(right), [], `正确词「${right}」被误报`);
   }
+});
+
+// ---------- 全量自洽校验：这是词典质量的核心保障 ----------
+
+test('全部正确写法都不会被误报', () => {
+  const failures = [];
+  for (const { right, wrong } of getTypoEntries()) {
+    const issues = spell(right);
+    if (issues.length > 0) failures.push(`${right}（来自错词 ${wrong}）`);
+  }
+  assert.deepEqual(failures, [], `以下正确词被误报：${failures.join(', ')}`);
+});
+
+test('全部错误写法都能被检出', () => {
+  const missed = [];
+  for (const { wrong } of getTypoEntries()) {
+    if (spell(wrong).length === 0) missed.push(wrong);
+  }
+  assert.deepEqual(missed, [], `以下错词漏检：${missed.join(', ')}`);
+});
+
+test('新增常用二字词可被检出', () => {
+  const cases = [
+    ['烦燥', '烦躁'],
+    ['锻练', '锻炼'],
+    ['成份', '成分'],
+    ['精采', '精彩'],
+    ['究竞', '究竟'],
+    ['份量', '分量'],
+    ['藉口', '借口'],
+    ['幅射', '辐射'],
+  ];
+  for (const [wrong, right] of cases) {
+    const issues = spell(`这段文字里有${wrong}问题`);
+    assert.ok(issues.length > 0, `「${wrong}」未被检出`);
+    assert.equal(issues[0].suggestion, right);
+  }
+});
+
+test('新增成语可被检出', () => {
+  const cases = [
+    ['病入膏盲', '病入膏肓'],
+    ['老奸巨滑', '老奸巨猾'],
+    ['鞠躬尽粹', '鞠躬尽瘁'],
+    ['独树一炽', '独树一帜'],
+  ];
+  for (const [wrong, right] of cases) {
+    const issues = spell(`他说他${wrong}`);
+    assert.ok(issues.length > 0, `「${wrong}」未被检出`);
+    assert.equal(issues[0].suggestion, right);
+  }
+});
+
+test('二字词不会误伤包含它的正确长词', () => {
+  // 这些句子包含新词条中的字，但整体写法正确
+  const good = [
+    '这个方案已经完成部署。',
+    '我们要认真参与讨论。',
+    '工作态度很谨慎。',
+    '他提出了宝贵建议。',
+    '实验结果令人满意。',
+  ];
+  for (const text of good) {
+    assert.deepEqual(spell(text), [], `正确句子被误报：${text}`);
+  }
+});
+
+test('词典中不存在重复的错词键', () => {
+  const keys = Object.keys(typoDict);
+  assert.equal(new Set(keys).size, keys.length);
 });
