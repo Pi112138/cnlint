@@ -32,6 +32,7 @@
 - ✅ **一键自动修复**：`--fix` 可安全修复缺空格、重复标点、半角引号，其余问题保留待人工确认
 - ✅ **自动跳过代码**：围栏代码块与行内代码不参与检查，避免误报；URL 与链接目标不受影响
 - ✅ **Markdown 结构感知**：识别标题/列表/引用/表格/加粗等结构，跳过语法标记只检查正文
+- ✅ **可选大模型审校**：`--semantic` 让模型二次确认疑似错别字，排除专有名词等误报
 - ✅ **轻量易集成**：零第三方依赖，支持目录批量扫描与 `--staged`，可嵌入 Git Hook / CI
 
 ## 🎯 解决痛点
@@ -115,6 +116,62 @@ node ./bin/cnlint.js ./docs/ --fix
 - URL 与 Markdown 链接目标
 - 存在歧义的问题（如「英文语境全角标点」）——只提示、不自动改
 
+### 🤖 大模型语义审校（可选）
+
+错别字判断有时需要理解语境：某些字组合是产品名、专有名词的一部分，按错字处理反而是错的。规则引擎无法判断这类情况，可以让大模型二次确认：
+
+```bash
+export CNLINT_API_KEY="你的密钥"
+export CNLINT_API_BASE="https://api.deepseek.com/v1"   # 可选
+export CNLINT_MODEL="deepseek-chat"                     # 可选
+
+cnlint ./docs/ --semantic
+```
+
+工作方式（规则负责找嫌疑人，模型负责定罪）：
+
+```text
+规则引擎扫出全部问题
+        ↓
+只把「疑似错别字」连同所在句子发给模型
+        ↓
+模型回答：是不是错字？正确写法是什么？
+        ↓
+否 → 丢弃（减少误报）    是 → 保留（采用模型的正确写法）
+```
+
+效果示例：
+
+```text
+✅ 校验完成，共扫描 1 个文件
+🤖 语义审校：模型确认 2 处，模型排除 1 处误报
+
+⚠️ docs/a.md:1:3
+   疑似错别字：按装 → 安装（需人工处理）
+```
+
+`按装宝`（产品名）被模型自动排除，另外两处真实错字保留。
+
+#### 支持的模型
+
+只依赖 **OpenAI 兼容的 `/chat/completions` 协议**，以下均可直接接入：
+
+| 服务 | `CNLINT_API_BASE` |
+|---|---|
+| OpenAI | `https://api.openai.com/v1`（默认） |
+| DeepSeek | `https://api.deepseek.com/v1` |
+| 通义千问 | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` |
+| Ollama（本地） | `http://localhost:11434/v1` |
+
+#### 安全与降级
+
+- **默认不启用**：不加 `--semantic` 完全不联网、不产生费用
+- **缺少密钥自动跳过**：打印提示后按纯规则模式运行
+- **接口异常自动降级**：超时、网络错误、返回格式错误时，该批次按规则结果保留，**检查不会因此失败**
+- **结果缓存**：同一句子中的同一问题 7 天内不重复请求，避免反复花钱
+- **不修改文件**：`--semantic` 只影响报告，绝不写回文档
+
 ### 输出示例
 
 ```text
@@ -141,6 +198,7 @@ node ./bin/cnlint.js ./docs/ --fix
 | `--staged` | 只检查 git 暂存区里的文件（适合 pre-commit） |
 | `-f, --fix` | 自动修复可安全修复的问题并写回文件 |
 | `-n, --dry-run` | 配合 `--fix`：只显示将要修复的内容，不写文件 |
+| `-s, --semantic` | 调用大模型二次确认疑似错别字（需配置 API，见下节） |
 | `-q, --quiet` | 只输出汇总，不逐条列出问题 |
 | `-c, --config <路径>` | 指定配置文件（默认从当前目录向上查找 `.cnlintrc.json`） |
 | `-v, --version` | 显示版本 |
@@ -268,24 +326,31 @@ cnlint/
 │   ├── rules.js           # 规则集合（含 fixable 标记与 URL 保护）
 │   ├── dict.js            # 常见错别字词典与误报白名单（200+ 条）
 │   ├── text.js            # 行切分、Markdown 结构识别、代码块与行内代码定位
-│   └── files.js           # 文件发现、配置向上查找、--staged 支持
+│   ├── files.js           # 文件发现、配置向上查找、--staged 支持
+│   └── llm/
+│       ├── provider.js    # OpenAI 兼容接口客户端（可注入、可超时）
+│       ├── semantic.js    # 语义审校：组提示词、解析结论、批量处理
+│       └── cache.js       # 审校结果缓存，避免重复计费
 ├── test/
 │   ├── linter.test.js     # 规则与检查器测试
 │   ├── fixer.test.js      # 自动修复测试
 │   ├── spelling.test.js   # 错别字词典测试（含全量自洽校验）
-│   └── markdown.test.js   # Markdown 结构感知测试
+│   ├── markdown.test.js   # Markdown 结构感知测试
+│   └── llm.test.js        # 语义审校测试（全部使用 mock，不联网）
 └── .cnlintrc.example.json # 配置文件示例
 ```
 
 ## 🧪 开发与测试
 
 ```bash
-# 运行自动化测试（72 个用例）
+# 运行自动化测试（105 个用例，全程不联网）
 npm test
 
 # 自检本项目文档
 node ./bin/cnlint.js README.md
 ```
+
+> 语义审校的测试通过依赖注入使用假的模型客户端，因此在 CI 中无需配置 API Key，也不会产生任何调用费用。
 
 ## 📖 遵循规范
 

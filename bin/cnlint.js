@@ -13,6 +13,9 @@ import process from 'node:process';
 import { readFile, writeFile } from 'node:fs/promises';
 import { lintFile } from '../src/linter.js';
 import { fixText } from '../src/fixer.js';
+import { createProvider, configFromEnv } from '../src/llm/provider.js';
+import { reviewIssues, isSemanticCandidate } from '../src/llm/semantic.js';
+import { createMemoryCache, withCache } from '../src/llm/cache.js';
 import {
   collectFiles,
   loadConfig,
@@ -31,10 +34,17 @@ const HELP = `cnlint — 中文文档排版 & 拼写检查
       --staged         只检查 git 暂存区里的文件
   -f, --fix            自动修复可安全修复的问题并写回文件
   -n, --dry-run        配合 --fix 使用：只显示将要修复的内容，不写文件
+  -s, --semantic       调用大模型二次确认疑似错别字（需配置 API）
   -q, --quiet          只输出汇总，不逐条列出问题
   -c, --config <路径>  指定配置文件（默认向上查找 .cnlintrc.json）
   -v, --version        显示版本
   -h, --help           显示帮助
+
+环境变量（--semantic 所需）
+  CNLINT_API_KEY       模型接口密钥（未设置则自动退回纯规则模式）
+  CNLINT_API_BASE      接口根地址，默认 https://api.openai.com/v1
+  CNLINT_MODEL         模型名，默认 gpt-4o-mini
+  CNLINT_TIMEOUT_MS    单次请求超时，默认 30000
 
 退出码
   0  无 error 级问题
@@ -56,6 +66,7 @@ export function parseArgs(argv) {
     config: null,
     fix: false,
     dryRun: false,
+    semantic: false,
     help: false,
     version: false,
   };
@@ -85,6 +96,10 @@ export function parseArgs(argv) {
       case '-n':
       case '--dry-run':
         opts.dryRun = true;
+        break;
+      case '-s':
+      case '--semantic':
+        opts.semantic = true;
         break;
       case '-e':
       case '--ext': {
@@ -197,6 +212,11 @@ export async function run(argv, io = {}) {
   let touchedFiles = 0;
   const reports = [];
 
+  // ---- 语义审校准备（方案 B：规则找嫌疑人，模型定罪） ----
+  const semantic = await setupSemantic(opts, io, stderr);
+  let semanticConfirmed = 0;
+  let semanticRejected = 0;
+
   for (const rel of files) {
     const abs = path.resolve(cwd, rel);
     const display = path.relative(cwd, abs).split(path.sep).join('/') || rel;
@@ -211,7 +231,7 @@ export async function run(argv, io = {}) {
         continue;
       }
 
-      const { output, fixed, remaining } = fixText(text, { levels: config.levels });
+      let { output, fixed, remaining } = fixText(text, { levels: config.levels });
 
       if (fixed.length > 0) {
         fixedCount += fixed.length;
@@ -238,12 +258,44 @@ export async function run(argv, io = {}) {
     }
     if (result.issues.length === 0) continue;
 
-    reports.push({ display, issues: result.issues });
-    totalIssues += result.issues.length;
-    errorCount += result.issues.filter((i) => i.severity === 'error').length;
+    let issues = result.issues;
+
+    // 语义二次确认：仅对疑似错别字这类需要理解语境的问题
+    if (semantic.provider) {
+      let text = '';
+      try {
+        text = await readFile(abs, 'utf8');
+      } catch {
+        text = '';
+      }
+
+      const { confirmed, rejected } = await reviewIssues(issues, text, semantic.provider, {
+        onWarn: semantic.onWarn,
+      });
+      semanticConfirmed += confirmed.filter((i) => i.semanticConfirmed).length;
+      semanticRejected += rejected.length;
+
+      // 用审校结果替换原问题：
+      // - 非语义类问题（空格、标点等）原样保留
+      // - 语义类问题只保留模型确认过的（含模型更新的正确写法）
+      issues = mergeSemanticIssues(issues, confirmed, rejected);
+    }
+
+    if (issues.length === 0) continue;
+
+    reports.push({ display, issues });
+    totalIssues += issues.length;
+    errorCount += issues.filter((i) => i.severity === 'error').length;
   }
 
   stdout(`✅ 校验完成，共扫描 ${files.length} 个文件\n`);
+
+  if (semantic.provider && (semanticConfirmed > 0 || semanticRejected > 0)) {
+    const parts = [];
+    if (semanticConfirmed > 0) parts.push(`模型确认 ${semanticConfirmed} 处`);
+    if (semanticRejected > 0) parts.push(`模型排除 ${semanticRejected} 处误报`);
+    stdout(`🤖 语义审校：${parts.join('，')}\n`);
+  }
 
   if (opts.fix) {
     if (fixedCount > 0) {
@@ -301,6 +353,81 @@ export async function run(argv, io = {}) {
   }
 
   return errorCount > 0 ? 1 : 0;
+}
+
+/**
+ * 合并语义审校结果。
+ *
+ * - 非语义类问题（空格、标点等）原样保留
+ * - 语义类问题只保留模型确认过的（含模型修正后的正确写法）
+ *
+ * @param {Array} originalIssues 规则引擎原始结果
+ * @param {Array} confirmed 模型确认的问题
+ * @param {Array} rejected 模型否定的问题
+ * @returns {Array}
+ */
+export function mergeSemanticIssues(originalIssues, confirmed, rejected) {
+  // 1) 非语义类问题（空格、标点、引号等）原样保留
+  const result = originalIssues.filter((i) => !isSemanticCandidate(i));
+
+  // 2) 语义类问题：只保留模型确认过的，并优先采用模型修正后的写法
+  const confirmedByKey = new Map();
+  for (const c of confirmed) {
+    confirmedByKey.set(`${c.line}:${c.column}:${c.original}`, c);
+  }
+
+  for (const issue of originalIssues) {
+    if (!isSemanticCandidate(issue)) continue;
+    const key = `${issue.line}:${issue.column}:${issue.original}`;
+    const hit = confirmedByKey.get(key);
+    // 只有被确认的才保留；被否定的直接丢弃（减少误报）
+    if (hit) result.push(hit);
+  }
+
+  return result.sort((a, b) => a.line - b.line || a.column - b.column);
+}
+
+/**
+ * 初始化语义审校（方案 B）。
+ *
+ * 规则：
+ * - 未加 --semantic：完全不启用，行为与纯规则模式一致
+ * - 加了 --semantic 但没配密钥：打印提示后自动退回纯规则模式
+ * - 初始化异常：同样退回纯规则模式，绝不让检查因模型问题失败
+ *
+ * @param {object} opts 命令行选项
+ * @param {object} io 输出接口
+ * @param {Function} stderr 错误输出
+ * @returns {Promise<{provider: object|null, onWarn: Function}>}
+ */
+export async function setupSemantic(opts, io = {}, stderr = () => {}) {
+  const stdout = io.stdout ?? ((s) => process.stdout.write(s));
+  const onWarn = (msg) => stderr(`cnlint: ${msg}\n`);
+
+  if (!opts.semantic) {
+    return { provider: null, onWarn };
+  }
+
+  // 测试可注入 provider
+  if (io.provider) {
+    return { provider: io.provider, onWarn: io.onWarn ?? onWarn };
+  }
+
+  const config = configFromEnv(io.env ?? process.env);
+  if (!config) {
+    stdout('⚠️ 未检测到 CNLINT_API_KEY，语义审校已跳过，按纯规则模式运行\n');
+    return { provider: null, onWarn };
+  }
+
+  try {
+    const raw = createProvider(config, io.fetchImpl ? { fetchImpl: io.fetchImpl } : {});
+    const useCache = io.cache ?? createMemoryCache();
+    const provider = withCache(raw, useCache);
+    return { provider, onWarn, model: config.model };
+  } catch (err) {
+    onWarn(`语义审校初始化失败，按纯规则模式运行：${err.message}`);
+    return { provider: null, onWarn };
+  }
 }
 
 /**
