@@ -1,5 +1,5 @@
 {
-  "name": "cnlint",
+  "name": "@pi112138/cnlint",
   "version": "0.1.0",
   "description": "中文文档轻量排版 & 拼写检查 Lint 工具，支持一键自动修复",
   "keywords": [

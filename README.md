@@ -46,7 +46,15 @@
 
 ### 使用
 
-从源码运行：
+从 npm 安装（包名带作用域，安装后命令仍为 `cnlint`）：
+
+```bash
+npm install -g @pi112138/cnlint
+
+cnlint README.md
+```
+
+或从源码运行（零第三方依赖，无需 `npm install`）：
 
 ```bash
 git clone https://github.com/Pi112138/cnlint.git
@@ -59,10 +67,10 @@ node ./bin/cnlint.js README.md
 node ./bin/cnlint.js ./docs/ --ext .md,.txt
 ```
 
-如需全局 `cnlint` 命令，可先在本仓库内建立链接：
+也可以用 `npx` 免安装临时运行：
 
 ```bash
-npm link          # 之后即可直接使用 cnlint 命令
+npx @pi112138/cnlint ./docs/
 ```
 
 ### 自动修复
