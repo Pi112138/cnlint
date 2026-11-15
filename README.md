@@ -4,8 +4,10 @@
 
 **中文文档轻量排版 & 拼写检查 Lint 工具**
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](#-许可证)
-[![Version](https://img.shields.io/badge/version-0.1.0-orange)]()
+[![CI](https://github.com/Pi112138/cnlint/actions/workflows/ci.yml/badge.svg)](https://github.com/Pi112138/cnlint/actions/workflows/ci.yml)
+[![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.1.0-orange.svg)](https://github.com/Pi112138/cnlint/releases)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/Pi112138/cnlint/pulls)
 
 </div>

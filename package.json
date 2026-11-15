@@ -1,17 +1,21 @@
 {
   "name": "cnlint",
   "version": "0.1.0",
-  "description": "中文文档轻量排版 & 拼写检查 Lint 工具",
+  "description": "中文文档轻量排版 & 拼写检查 Lint 工具，支持一键自动修复",
   "keywords": [
     "lint",
+    "linter",
     "chinese",
     "markdown",
     "typography",
     "cjk",
-    "proofreading"
+    "proofreading",
+    "中文排版",
+    "文档检查",
+    "自动修复"
   ],
   "license": "MIT",
-  "author": "Pi112138",
+  "author": "Pi112138 <331921338+Pi112138@users.noreply.github.com>",
   "type": "module",
   "bin": {
     "cnlint": "./bin/cnlint.js"
@@ -24,14 +28,24 @@
     "bin",
     "src",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    ".cnlintrc.example.json"
   ],
   "engines": {
     "node": ">=18"
   },
+  "packageManager": "npm@10",
   "scripts": {
     "test": "node --test test/*.test.js",
-    "lint:self": "node ./bin/cnlint.js README.md"
+    "lint:self": "node ./bin/cnlint.js README.md",
+    "check": "npm test && npm run lint:self",
+    "prepublishOnly": "npm run check",
+    "pack": "npm pack --dry-run"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "provenance": true
   },
   "repository": {
     "type": "git",
@@ -40,5 +54,9 @@
   "bugs": {
     "url": "https://github.com/Pi112138/cnlint/issues"
   },
-  "homepage": "https://github.com/Pi112138/cnlint#readme"
+  "homepage": "https://github.com/Pi112138/cnlint#readme",
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/Pi112138"
+  }
 }

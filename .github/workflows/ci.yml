@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test (Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [18, 20, 22]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Show environment
+        run: |
+          node --version
+          npm --version
+
+      - name: Run tests
+        run: npm test
+
+      - name: Self-check documentation
+        run: node ./bin/cnlint.js README.md
+
+      - name: Verify CLI entry works
+        run: |
+          node ./bin/cnlint.js --version
+          node ./bin/cnlint.js --help
