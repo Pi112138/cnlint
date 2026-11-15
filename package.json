@@ -36,7 +36,7 @@
   },
   "packageManager": "npm@10",
   "scripts": {
-    "test": "node --test test/*.test.js",
+    "test": "node --test",
     "lint:self": "node ./bin/cnlint.js README.md",
     "check": "npm test && npm run lint:self",
     "prepublishOnly": "npm run check",
