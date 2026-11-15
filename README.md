@@ -37,21 +37,29 @@
 
 ## 📦 快速上手
 
-### 安装
+### 环境要求
+
+- Node.js >= 18（本项目零第三方依赖，无需 `npm install`）
+
+### 使用
+
+从源码运行：
 
 ```bash
-# 全局安装
-npm install -g cnlint
+git clone https://github.com/Pi112138/cnlint.git
+cd cnlint
+
+# 检查单个文件
+node ./bin/cnlint.js README.md
+
+# 扫描整个目录下的 md / txt 文档
+node ./bin/cnlint.js ./docs/ --ext .md,.txt
 ```
 
-### 用法
+如需全局 `cnlint` 命令，可先在本仓库内建立链接：
 
 ```bash
-# 检查单个文件
-cnlint README.md
-
-# 扫描整个目录下所有 md / txt 文档
-cnlint ./docs/ --ext .md,.txt
+npm link          # 之后即可直接使用 cnlint 命令
 ```
 
 ### 输出示例
@@ -59,45 +67,126 @@ cnlint ./docs/ --ext .md,.txt
 ```text
 ✅ 校验完成，共扫描 3 个文件
 
-⚠️ docs/intro.md:12:5
-   中英文缺少空格
-   → 原文: 使用cnlint工具
-   → 修复: 使用 cnlint 工具
+❌ docs/intro.md:12:5
+   中英文之间缺少空格
+   → 原文: 用c
+   → 修复: 用 c
 
 ⚠️ README.md:26:12
-   正文误用半角引号
+   正文误用半角双引号
    → 原文: "示例"
-   → 推荐: “示例”
+   → 修复: “示例”
+
+共发现 2 个问题（error 1 个）
 ```
+
+### 命令行选项
+
+| 选项 | 说明 |
+|---|---|
+| `-e, --ext <列表>` | 扫描的扩展名，逗号分隔（默认 `.md,.txt`） |
+| `--staged` | 只检查 git 暂存区里的文件（适合 pre-commit） |
+| `-q, --quiet` | 只输出汇总，不逐条列出问题 |
+| `-c, --config <路径>` | 指定配置文件（默认从当前目录向上查找 `.cnlintrc.json`） |
+| `-v, --version` | 显示版本 |
+| `-h, --help` | 显示帮助 |
+
+### 退出码
+
+| 退出码 | 含义 |
+|---|---|
+| `0` | 无 error 级问题 |
+| `1` | 存在 error 级问题 |
+| `2` | 参数或运行错误（如配置文件非法） |
 
 ## 🔧 高级配置
 
-在项目根目录新建 `.cnlintrc.json` 自定义规则：
+在项目根目录新建 `.cnlintrc.json` 自定义规则（可直接复制 `.cnlintrc.example.json`）：
 
 ```json
 {
   "rules": {
     "space-between-cn-en": "error",
     "no-duplicate-punctuation": "warn",
-    "quotes": "error"
+    "quotes": "error",
+    "fullwidth-punct-in-latin": "warn"
   },
   "ignore": ["node_modules/**", "CHANGELOG.md"]
 }
 ```
 
+规则级别可选 `error`、`warn`、`off`（或 `false`，表示关闭）。
+
+### 内置规则
+
+| 规则 ID | 默认级别 | 说明 |
+|---|---|---|
+| `space-between-cn-en` | `error` | 中文与英文/数字之间缺空格 |
+| `no-duplicate-punctuation` | `warn` | 连续重复的中文标点，如 `，，`、`？？` |
+| `quotes` | `error` | 中文正文误用半角双引号 `"示例"` |
+| `fullwidth-punct-in-latin` | `warn` | 英文语境中误用全角标点，如 `hello，world` |
+
+### 自动跳过的内容
+
+以下内容不会被规则检查，避免误报：
+
+- 围栏代码块（` ``` ` 与 `~~~`）内的所有行
+- 行内代码 `` `code` `` 覆盖的区间
+
 ## 🤖 CI / Git Hook 集成
+
+### GitHub Actions
 
 在 `.github/workflows/lint.yml` 中加入：
 
 ```yaml
-- name: Run cnlint
-  run: npx cnlint ./docs/
+name: lint
+
+on: [push, pull_request]
+
+jobs:
+  cnlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run cnlint
+        run: node ./bin/cnlint.js ./docs/ --ext .md
 ```
 
-或配合 husky 在提交前自动检查：
+### Git Hook
+
+配合 husky 在提交前自动检查暂存区文档：
 
 ```bash
-npx husky add .husky/pre-commit "npx cnlint --staged"
+npx husky add .husky/pre-commit "node ./bin/cnlint.js --staged"
+```
+
+## 🗂 项目结构
+
+```text
+cnlint/
+├── bin/cnlint.js          # 命令行入口（参数解析、输出、退出码）
+├── src/
+│   ├── index.js           # 对外导出的 API
+│   ├── linter.js          # 检查器：逐行应用规则、配置归一化、glob 匹配
+│   ├── rules.js           # 规则集合
+│   ├── text.js            # 行切分、代码块与行内代码定位
+│   └── files.js           # 文件发现、配置向上查找、--staged 支持
+├── test/linter.test.js    # 基于 node:test 的自动化测试
+└── .cnlintrc.example.json # 配置文件示例
+```
+
+## 🧪 开发与测试
+
+```bash
+# 运行自动化测试（14 个用例）
+npm test
+
+# 自检本项目文档
+node ./bin/cnlint.js README.md
 ```
 
 ## 📖 遵循规范

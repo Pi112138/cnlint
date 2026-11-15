@@ -1,0 +1,44 @@
+{
+  "name": "cnlint",
+  "version": "0.1.0",
+  "description": "中文文档轻量排版 & 拼写检查 Lint 工具",
+  "keywords": [
+    "lint",
+    "chinese",
+    "markdown",
+    "typography",
+    "cjk",
+    "proofreading"
+  ],
+  "license": "MIT",
+  "author": "Pi112138",
+  "type": "module",
+  "bin": {
+    "cnlint": "./bin/cnlint.js"
+  },
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "lint:self": "node ./bin/cnlint.js README.md"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Pi112138/cnlint.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Pi112138/cnlint/issues"
+  },
+  "homepage": "https://github.com/Pi112138/cnlint#readme"
+}
