@@ -4,7 +4,7 @@
  * 设计原则：只修复「答案唯一」的问题，其余保持原样交给人工处理。
  */
 
-import { splitLines, markFencedCodeLines, inlineCodeRanges, inRanges } from './text.js';
+import { splitLines, markFencedCodeLines, inlineCodeRanges, inRanges, classifyLine, isSkippedKind } from './text.js';
 import { rules, defaultRuleLevels } from './rules.js';
 
 /**
@@ -72,8 +72,16 @@ export function fixText(text, options = {}) {
       continue;
     }
 
+    // Markdown 结构感知：与检查器保持一致
+    const info = classifyLine(line);
+    if (isSkippedKind(info.kind)) {
+      outLines.push(line);
+      continue;
+    }
+
     const inline = inlineCodeRanges(line);
-    const ctx = { isSkipped: (col) => inRanges(col, inline) };
+    const skippedRanges = [...inline, ...info.markers];
+    const ctx = { isSkipped: (col) => inRanges(col, skippedRanges) };
 
     const lineIssues = [];
     for (const rule of active) {

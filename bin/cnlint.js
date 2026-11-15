@@ -273,8 +273,9 @@ export async function run(argv, io = {}) {
       }
       for (const issue of report.remaining ?? report.issues ?? []) {
         const icon = issue.severity === 'error' ? '❌' : '⚠️';
+        const hint = issue.fixable ? '（可用 --fix 自动修复）' : '（需人工处理）';
         stdout(`${icon} ${report.display}:${issue.line}:${issue.column}\n`);
-        stdout(`   ${issue.message}（需人工处理）\n`);
+        stdout(`   ${issue.message}${hint}\n`);
         if (!opts.quiet) {
           stdout(`   → 原文: ${issue.original}\n`);
           stdout(`   → 建议: ${issue.suggestion}\n`);

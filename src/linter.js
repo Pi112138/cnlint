@@ -4,7 +4,7 @@
 
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { splitLines, markFencedCodeLines, inlineCodeRanges, inRanges } from './text.js';
+import { splitLines, markFencedCodeLines, inlineCodeRanges, inRanges, classifyLine, isSkippedKind } from './text.js';
 import { rules, defaultRuleLevels } from './rules.js';
 
 /**
@@ -75,13 +75,21 @@ export function lintText(text, options = {}) {
   for (let i = 0; i < lines.length; i++) {
     if (skipLines[i]) continue;
     const line = lines[i];
+
+    // Markdown 结构感知：整体跳过的行（表格分隔符、HTML、空行、围栏）
+    const info = classifyLine(line);
+    if (isSkippedKind(info.kind)) continue;
+
+    // 行内代码 + 结构标记（列表符、引用符、表格竖线、链接语法、强调符号）
     const inline = inlineCodeRanges(line);
+    const skippedRanges = [...inline, ...info.markers];
     const ctx = {
-      isSkipped: (col) => inRanges(col, inline),
+      isSkipped: (col) => inRanges(col, skippedRanges),
     };
 
     for (const rule of active) {
       for (const issue of rule.check(line, ctx)) {
+        // 去掉行首结构标记后，列号仍然是整行坐标，可直接用于定位
         issues.push({
           ...issue,
           severity: levels[rule.id],
