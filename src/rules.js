@@ -3,20 +3,62 @@
  *
  * 每条规则形如：
  *   {
- *     id: 'space-between-cn-en',
- *     description: '...',
+ *     id, description,
  *     check(line, ctx) -> Issue[]
  *   }
- * Issue: { ruleId, column, length, message, original, suggestion }
+ *
+ * Issue: {
+ *   ruleId,
+ *   column,      // 1-based 列号
+ *   length,      // 原文长度
+ *   message,
+ *   original,    // 原文片段
+ *   suggestion,  // 建议替换成的文本
+ *   fixable      // 是否可以安全自动修复
+ * }
+ *
+ * 关于 fixable 的约定：只有「替换结果唯一且无歧义」的问题才标记为 true。
+ * 例如中英文缺空格、重复标点、中文正文里的半角双引号；而「英文语境误用全角标点」
+ * 存在歧义（可能是在引号/URL 上下文），因此不自动修复。
  */
 
 const CJK = '\\u4e00-\\u9fff\\u3400-\\u4dbf';
 const CJK_OR_FULLWIDTH_PUNCT = `${CJK}\\u3000-\\u303f\\uff00-\\uffef`;
 
-/** 中文（含 harmony / 扩展 A 常用区）字符 */
+/** 中文（含扩展 A 常用区）字符 */
 const RE_CJK = new RegExp(`[${CJK}]`);
 /** 英文/数字字符 */
 const RE_LATIN = /[A-Za-z0-9]/;
+
+/**
+ * 判断一个位置是否位于链接/URL 内部，避免改动 URL。
+ * 覆盖 markdown 链接 (url)、裸链接 http(s)://xxx、以及邮箱。
+ *
+ * @param {string} line
+ * @param {number} pos 0-based 列
+ * @returns {boolean}
+ */
+function inLinkOrUrl(line, pos) {
+  // markdown 链接目标：](...)
+  const linkTarget = line.match(/\]\([^)]*\)/g);
+  if (linkTarget) {
+    let offset = 0;
+    for (const seg of linkTarget) {
+      const start = line.indexOf(seg, offset);
+      if (start >= 0 && pos >= start && pos < start + seg.length) return true;
+      offset = start + seg.length;
+    }
+  }
+
+  // 裸 URL / 邮箱
+  const urlRe = /https?:\/\/[^\s)）]+|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/g;
+  let m;
+  while ((m = urlRe.exec(line)) !== null) {
+    if (pos >= m.index && pos < m.index + m[0].length) return true;
+  }
+
+  return false;
+}
 
 /**
  * 规则：中英文之间缺少空格。
@@ -31,6 +73,7 @@ const spaceBetweenCnEn = {
       const a = line[i];
       const b = line[i + 1];
       if (ctx.isSkipped(i) || ctx.isSkipped(i + 1)) continue;
+      if (inLinkOrUrl(line, i)) continue;
 
       const cnBefore = RE_CJK.test(a);
       const latinAfter = RE_LATIN.test(b);
@@ -38,7 +81,6 @@ const spaceBetweenCnEn = {
       const cnAfter = RE_CJK.test(b);
 
       if ((cnBefore && latinAfter) || (latinBefore && cnAfter)) {
-        // 排除 markdown 语义字符、URL、文件扩展名等噪声由调用方预处理
         issues.push({
           ruleId: this.id,
           column: i + 1,
@@ -46,6 +88,7 @@ const spaceBetweenCnEn = {
           message: '中英文之间缺少空格',
           original: a + b,
           suggestion: `${a} ${b}`,
+          fixable: true,
         });
       }
     }
@@ -68,6 +111,7 @@ const noDuplicatePunctuation = {
       const a = line[i];
       const b = line[i + 1];
       if (ctx.isSkipped(i) || ctx.isSkipped(i + 1)) continue;
+      if (inLinkOrUrl(line, i)) continue;
       if (!target.test(a) || !target.test(b)) continue;
 
       // 允许合法的英文省略号 "..." 与中文 "……"
@@ -80,6 +124,7 @@ const noDuplicatePunctuation = {
         message: '检测到重复标点',
         original: a + b,
         suggestion: a,
+        fixable: true,
       });
     }
     return issues;
@@ -88,7 +133,7 @@ const noDuplicatePunctuation = {
 
 /**
  * 规则：正文误用半角引号。
- * 检测成对的 "..." 或英文单引号用于中文正文，建议改为中文引号。
+ * 检测成对的 "..." 用于中文正文，建议改为中文引号。
  */
 const quotes = {
   id: 'quotes',
@@ -97,6 +142,7 @@ const quotes = {
     const issues = [];
     for (let i = 0; i < line.length; i++) {
       if (ctx.isSkipped(i)) continue;
+      if (inLinkOrUrl(line, i)) continue;
       if (line[i] !== '"') continue;
 
       // 找配对的下一个半角双引号
@@ -121,6 +167,7 @@ const quotes = {
         message: '正文误用半角双引号',
         original: line.slice(i, j + 1),
         suggestion: `“${inner}”`,
+        fixable: true,
       });
       i = j;
     }
@@ -130,7 +177,9 @@ const quotes = {
 
 /**
  * 规则：全角标点误用（英文语境下使用全角标点）。
- * 例如 "hello，world" 中逗号应为半角。
+ *
+ * 该规则存在上下文歧义（可能处于引号、缩写、代码片段边缘），
+ * 因此只报告、不自动修复。
  */
 const punctWidth = {
   id: 'fullwidth-punct-in-latin',
@@ -139,6 +188,7 @@ const punctWidth = {
     const issues = [];
     for (let i = 0; i < line.length; i++) {
       if (ctx.isSkipped(i)) continue;
+      if (inLinkOrUrl(line, i)) continue;
       const ch = line[i];
       const half = { '，': ',', '；': ';', '：': ':', '。': '.', '？': '?', '！': '!' }[ch];
       if (!half) continue;
@@ -158,6 +208,7 @@ const punctWidth = {
         message: '英文语境中误用全角标点',
         original: ch,
         suggestion: half,
+        fixable: false,
       });
     }
     return issues;
@@ -181,4 +232,4 @@ export const defaultRuleLevels = {
   'fullwidth-punct-in-latin': 'warn',
 };
 
-export { RE_CJK, RE_LATIN, CJK_OR_FULLWIDTH_PUNCT };
+export { RE_CJK, RE_LATIN, CJK_OR_FULLWIDTH_PUNCT, inLinkOrUrl };
