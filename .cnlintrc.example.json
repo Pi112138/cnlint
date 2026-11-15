@@ -3,7 +3,8 @@
     "space-between-cn-en": "error",
     "no-duplicate-punctuation": "warn",
     "quotes": "error",
-    "fullwidth-punct-in-latin": "warn"
+    "fullwidth-punct-in-latin": "warn",
+    "spelling": "warn"
   },
   "ignore": ["node_modules/**", "CHANGELOG.md"]
 }

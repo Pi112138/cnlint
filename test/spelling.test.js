@@ -1,0 +1,115 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { lintText } from '../src/linter.js';
+import { typoDict, typoWhitelist, getTypoEntries } from '../src/dict.js';
+
+const ONLY_SPELLING = {
+  'space-between-cn-en': false,
+  'no-duplicate-punctuation': false,
+  quotes: false,
+  'fullwidth-punct-in-latin': false,
+  spelling: 'warn',
+};
+
+const spell = (text) => lintText(text, { levels: ONLY_SPELLING });
+
+test('词典无「错词等于正词」的无效条目', () => {
+  const invalid = Object.entries(typoDict).filter(([k, v]) => k === v);
+  assert.deepEqual(invalid, []);
+});
+
+test('词典词条数量充足', () => {
+  assert.ok(getTypoEntries().length >= 200, `实际 ${getTypoEntries().length} 条`);
+});
+
+test('白名单中的词不应同时是词典词条', () => {
+  for (const w of typoWhitelist) {
+    // 白名单是用于保护整词的，允许与词条同字但不应完全相同
+    assert.equal(typoDict[w] === w, false);
+  }
+});
+
+test('常见错别字被检出：按装 -> 安装', () => {
+  const issues = spell('请按装该软件');
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].ruleId, 'spelling');
+  assert.equal(issues[0].original, '按装');
+  assert.equal(issues[0].suggestion, '安装');
+});
+
+test('常见错别字被检出：必竟 -> 毕竟', () => {
+  const issues = spell('他必竟还是来了');
+  assert.equal(issues[0].suggestion, '毕竟');
+});
+
+test('常见错别字被检出：再接再励 -> 再接再厉', () => {
+  const issues = spell('我们应再接再励');
+  assert.equal(issues[0].original, '再接再励');
+  assert.equal(issues[0].suggestion, '再接再厉');
+});
+
+test('成语错别字被检出：甘败下风 -> 甘拜下风', () => {
+  const issues = spell('他甘败下风');
+  assert.equal(issues[0].suggestion, '甘拜下风');
+});
+
+test('同句多个错别字都能检出', () => {
+  const issues = spell('他必竟按装了软件');
+  assert.equal(issues.length, 2);
+});
+
+test('正确的词不误报', () => {
+  const text = '请安装该软件，这是正确的做法，毕竟如此，再接再厉。';
+  assert.deepEqual(spell(text), []);
+});
+
+test('长词优先：不被短词抢先命中', () => {
+  // 若词典同时存在「按装」与更长词条，应优先命中长词
+  const issues = spell('按步就班地工作');
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].original, '按步就班');
+});
+
+test('代码块内的错别字不报', () => {
+  const text = ['```', '按装按装按装', '```'].join('\n');
+  assert.deepEqual(spell(text), []);
+});
+
+test('行内代码内的错别字不报', () => {
+  assert.deepEqual(spell('代码 `按装` 不应报错'), []);
+});
+
+test('URL 内的错别字不报', () => {
+  assert.deepEqual(spell('见 https://example.com/按装 页面'), []);
+});
+
+test('白名单保护：坐位体前屈', () => {
+  assert.deepEqual(spell('体育考试项目有坐位体前屈'), []);
+});
+
+test('白名单保护：按装订顺序', () => {
+  assert.deepEqual(spell('按装订顺序排列文件'), []);
+});
+
+test('错别字规则默认不自动修复', () => {
+  const issues = spell('请按装该软件');
+  assert.equal(issues[0].fixable, false);
+});
+
+test('错别字规则可通过配置关闭', () => {
+  const levels = { ...ONLY_SPELLING, spelling: false };
+  assert.deepEqual(lintText('请按装该软件', { levels }), []);
+});
+
+test('列号从 1 开始且准确', () => {
+  const issues = spell('请按装该软件');
+  assert.equal(issues[0].column, 2);
+  assert.equal(issues[0].length, 2);
+});
+
+test('抽样校验：多个词条的正词写法不应被判错', () => {
+  const rights = getTypoEntries().slice(0, 40).map((e) => e.right);
+  for (const right of rights) {
+    assert.deepEqual(spell(right), [], `正确词「${right}」被误报`);
+  }
+});

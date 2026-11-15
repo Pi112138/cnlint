@@ -4,4 +4,5 @@
 export { lintText, lintFile, normalizeConfig } from './linter.js';
 export { fixText, fixLine } from './fixer.js';
 export { rules, defaultRuleLevels, ruleIds } from './rules.js';
+export { typoDict, typoWhitelist, getTypoEntries } from './dict.js';
 export { collectFiles, loadConfig, stagedFiles } from './files.js';

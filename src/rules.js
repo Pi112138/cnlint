@@ -19,8 +19,13 @@
  *
  * 关于 fixable 的约定：只有「替换结果唯一且无歧义」的问题才标记为 true。
  * 例如中英文缺空格、重复标点、中文正文里的半角双引号；而「英文语境误用全角标点」
- * 存在歧义（可能是在引号/URL 上下文），因此不自动修复。
+ * 与「错别字」存在语境歧义（可能处于引号/引用/专有名词上下文），因此不自动修复。
  */
+
+import { getTypoEntries, typoWhitelist } from './dict.js';
+
+/** 预处理后的错别字词条（长词优先） */
+const typoEntries = getTypoEntries();
 
 const CJK = '\\u4e00-\\u9fff\\u3400-\\u4dbf';
 const CJK_OR_FULLWIDTH_PUNCT = `${CJK}\\u3000-\\u303f\\uff00-\\uffef`;
@@ -215,11 +220,72 @@ const punctWidth = {
   },
 };
 
+/**
+ * 规则：常见中文错别字。
+ *
+ * 依据内置词典匹配「几乎任何语境下都错」的词语组合。
+ * 由于错别字判断即便置信度高也可能误伤（专有名词、引用原文等），
+ * 本规则**只报告、不自动修复**，默认级别为 warn。
+ */
+const spelling = {
+  id: 'spelling',
+  description: '常见中文错别字',
+  check(line, ctx) {
+    const issues = [];
+    const covered = [];
+
+    for (const { wrong, right } of typoEntries) {
+      let from = 0;
+      for (;;) {
+        const idx = line.indexOf(wrong, from);
+        if (idx === -1) break;
+        from = idx + 1;
+
+        // 已在更长词条中匹配过，跳过
+        if (covered.some(([s, e]) => idx >= s && idx + wrong.length <= e)) continue;
+
+        // 位于行内代码中，跳过
+        let skipped = false;
+        for (let k = idx; k < idx + wrong.length; k++) {
+          if (ctx.isSkipped(k)) {
+            skipped = true;
+            break;
+          }
+        }
+        if (skipped) continue;
+
+        // 位于链接/URL 中，跳过
+        if (inLinkOrUrl(line, idx)) continue;
+
+        // 命中白名单词（如“坐位体前屈”是专有名词），跳过
+        const inWhitelist = typoWhitelist.some(
+          (w) => line.indexOf(w) !== -1 && line.indexOf(w) <= idx && idx < line.indexOf(w) + w.length,
+        );
+        if (inWhitelist) continue;
+
+        covered.push([idx, idx + wrong.length]);
+        issues.push({
+          ruleId: this.id,
+          column: idx + 1,
+          length: wrong.length,
+          message: `疑似错别字：${wrong} → ${right}`,
+          original: wrong,
+          suggestion: right,
+          fixable: false,
+        });
+      }
+    }
+
+    return issues.sort((a, b) => a.column - b.column);
+  },
+};
+
 export const rules = [
   spaceBetweenCnEn,
   noDuplicatePunctuation,
   quotes,
   punctWidth,
+  spelling,
 ];
 
 export const ruleIds = rules.map((r) => r.id);
@@ -230,6 +296,7 @@ export const defaultRuleLevels = {
   'no-duplicate-punctuation': 'warn',
   quotes: 'error',
   'fullwidth-punct-in-latin': 'warn',
+  spelling: 'warn',
 };
 
 export { RE_CJK, RE_LATIN, CJK_OR_FULLWIDTH_PUNCT, inLinkOrUrl };
