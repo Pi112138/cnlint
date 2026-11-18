@@ -27,6 +27,7 @@
   "files": [
     "bin",
     "src",
+    "scripts",
     "README.md",
     "LICENSE",
     ".cnlintrc.example.json"

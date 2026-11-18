@@ -11,11 +11,12 @@
 import path from 'node:path';
 import process from 'node:process';
 import { readFile, writeFile } from 'node:fs/promises';
-import { lintFile } from '../src/linter.js';
+import { lintFile, detectBinaryType } from '../src/linter.js';
 import { fixText } from '../src/fixer.js';
 import { createProvider, configFromEnv } from '../src/llm/provider.js';
 import { reviewIssues, isSemanticCandidate } from '../src/llm/semantic.js';
 import { createMemoryCache, withCache } from '../src/llm/cache.js';
+import { runChecker, dependencyHelp, resolvePython } from '../src/docx/bridge.js';
 import {
   collectFiles,
   loadConfig,
@@ -27,9 +28,10 @@ import {
 const HELP = `cnlint — 中文文档排版 & 拼写检查
 
 用法
-  cnlint <文件或目录...> [选项]
+  cnlint <文件或目录...> [选项]             检查 Markdown / 文本
+  cnlint docx <文档.docx> [选项]            检查 Word 文档格式
 
-选项
+Markdown 选项
   -e, --ext <列表>     扫描的扩展名，逗号分隔（默认 .md,.txt）
       --staged         只检查 git 暂存区里的文件
   -f, --fix            自动修复可安全修复的问题并写回文件
@@ -40,11 +42,17 @@ const HELP = `cnlint — 中文文档排版 & 拼写检查
   -v, --version        显示版本
   -h, --help           显示帮助
 
-环境变量（--semantic 所需）
-  CNLINT_API_KEY       模型接口密钥（未设置则自动退回纯规则模式）
+Word 选项（需先安装 python-docx）
+  cnlint docx <待检测.docx> --spec <格式要求.docx>  用另一份文档当标准
+  cnlint docx <待检测.docx> --rules <rules.json>    用 JSON 规则
+  cnlint docx <文档.docx> --profile                 查看文档现有格式
+
+环境变量
+  CNLINT_API_KEY       模型接口密钥（--semantic 所需）
   CNLINT_API_BASE      接口根地址，默认 https://api.openai.com/v1
   CNLINT_MODEL         模型名，默认 gpt-4o-mini
   CNLINT_TIMEOUT_MS    单次请求超时，默认 30000
+  CNLINT_PYTHON        Word 检查所用的 Python 解释器路径
 
 退出码
   0  无 error 级问题
@@ -164,6 +172,11 @@ export async function run(argv, io = {}) {
   const stderr = io.stderr ?? ((s) => process.stderr.write(s));
   const cwd = io.cwd ?? process.cwd();
 
+  // ---- 子命令分发：cnlint docx ... ----
+  if (argv[0] === 'docx') {
+    return runDocx(argv.slice(1), { stdout, stderr, cwd, ...io });
+  }
+
   let opts;
   try {
     opts = parseArgs(argv);
@@ -225,7 +238,13 @@ export async function run(argv, io = {}) {
       // ---- 修复模式 ----
       let text;
       try {
-        text = (await readFile(abs, 'utf8'));
+        const buf = await readFile(abs);
+        const binary = detectBinaryType(buf);
+        if (binary) {
+          stdout(`⏭️  已跳过 ${display}：${binary}\n`);
+          continue;
+        }
+        text = buf.toString('utf8');
       } catch (err) {
         stderr(`cnlint: 无法读取 ${display}：${err.message}\n`);
         continue;
@@ -253,7 +272,12 @@ export async function run(argv, io = {}) {
     const result = await lintFile(abs, { levels: config.levels });
 
     if (result.error) {
-      stderr(`cnlint: ${result.error}\n`);
+      if (result.skipped) {
+        // 二进制文档不是错误，给出提示即可，不中断也不计入问题数
+        stdout(`⏭️  已跳过 ${display}：${result.error}\n`);
+      } else {
+        stderr(`cnlint: ${result.error}\n`);
+      }
       continue;
     }
     if (result.issues.length === 0) continue;
@@ -472,6 +496,65 @@ async function loadConfigFromFile(configPath, cwd) {
   const text = (await readFile(abs, 'utf8')).replace(/^\uFEFF/, '');
   const raw = JSON.parse(text);
   return { ...normalizeConfig(raw), configDir: path.dirname(abs) };
+}
+
+/**
+ * Word 文档格式检查子命令。
+ *
+ * 用法：
+ *   cnlint docx <待检测.docx> --spec <格式要求.docx>
+ *   cnlint docx <待检测.docx> --rules <rules.json>
+ *   cnlint docx <文档.docx> --profile
+ *
+ * @param {string[]} argv docx 之后的参数
+ * @param {object} io
+ * @returns {Promise<number>} 退出码
+ */
+export async function runDocx(argv, io = {}) {
+  const stdout = io.stdout ?? ((s) => process.stdout.write(s));
+  const stderr = io.stderr ?? ((s) => process.stderr.write(s));
+
+  if (argv.length === 0 || argv.includes('-h') || argv.includes('--help')) {
+    stdout(
+      `cnlint docx — Word 文档格式检查
+
+用法
+  cnlint docx <待检测.docx> --spec <格式要求.docx>   用另一份文档作为格式标准
+  cnlint docx <待检测.docx> --rules <rules.json>     用 JSON 文件写格式要求
+  cnlint docx <文档.docx> --profile                  查看文档当前的格式
+
+可检查项
+  中文字体、字号、加粗、对齐方式、行距、段前后间距、首行缩进
+
+说明
+  本功能依赖 Python 与 python-docx，首次使用请执行：
+    pip install python-docx
+
+退出码
+  0  全部符合要求
+  1  存在不符合的段落
+  2  参数错误
+  3  环境不可用（缺少 Python 或 python-docx）
+`,
+    );
+    return argv.length === 0 ? 2 : 0;
+  }
+
+  const target = argv[0];
+  const rest = argv.slice(1);
+
+  const r = runChecker([target, ...rest], { python: io.python });
+
+  if (r.hints && r.hints.length > 0 && r.code === 3) {
+    stderr(`${dependencyHelp(r.hints)}\n`);
+    return 3;
+  }
+
+  if (r.stdout) stdout(r.stdout);
+  if (r.stderr) stderr(r.stderr);
+
+  // Python 脚本用 1 表示「有不符项」，与 cnlint 语义一致，直接透传
+  return r.code;
 }
 
 // 直接执行时运行

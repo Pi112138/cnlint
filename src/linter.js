@@ -111,12 +111,57 @@ export function lintText(text, options = {}) {
  * @returns {Promise<{file: string, issues: Array, error?: string}>}
  */
 export async function lintFile(filePath, options = {}) {
-  let text;
+  let buffer;
   try {
-    text = await readFile(filePath, 'utf8');
+    buffer = await readFile(filePath);
   } catch (err) {
     return { file: filePath, issues: [], error: `无法读取文件：${err.message}` };
   }
 
+  // 二进制文件（如 .docx / .pdf / 图片）不能当文本检查，否则会产生大量乱码误报
+  const binary = detectBinaryType(buffer);
+  if (binary) {
+    return {
+      file: filePath,
+      issues: [],
+      skipped: true,
+      error: binary,
+    };
+  }
+
+  const text = buffer.toString('utf8');
   return { file: filePath, issues: lintText(text, options) };
+}
+
+/**
+ * 识别常见二进制文档类型。
+ *
+ * @param {Buffer} buffer
+ * @returns {string|null} 命中时返回提示语，否则 null
+ */
+export function detectBinaryType(buffer) {
+  if (buffer.length >= 4) {
+    // ZIP 容器（.docx / .xlsx / .pptx / .odt 都是 zip）
+    if (buffer[0] === 0x50 && buffer[1] === 0x4b && buffer[2] === 0x03 && buffer[3] === 0x04) {
+      return '这是二进制文档（如 .docx/.xlsx/.pptx），请改用「cnlint docx」检查';
+    }
+    // PDF
+    if (buffer.subarray(0, 4).toString('latin1') === '%PDF') {
+      return '这是 PDF 文件，无法按文本检查';
+    }
+    // OLE 复合文档（旧版 .doc/.xls/.ppt）
+    if (buffer[0] === 0xd0 && buffer[1] === 0xcf && buffer[2] === 0x11 && buffer[3] === 0xe0) {
+      return '这是旧版 Office 文档，请先转换为 .docx 再检查';
+    }
+  }
+
+  // 含 NUL 字节通常意味着二进制内容
+  const probe = buffer.subarray(0, 8000);
+  for (let i = 0; i < probe.length; i++) {
+    if (probe[i] === 0) {
+      return '这看起来是二进制文件，不是文本';
+    }
+  }
+
+  return null;
 }
