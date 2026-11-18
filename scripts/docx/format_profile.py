@@ -404,18 +404,85 @@ class _FakeRun:
         self.font = type("F", (), {"size": None, "name": None, "bold": None, "italic": None})()
 
 
+def body_format_clusters(paras: list[ParaFormat], min_count: int = 1) -> list[dict]:
+    """
+    把「正文」段落按实际格式聚类，返回多种可能合格的格式。
+
+    背景：真实文档常把所有段落都放在 Normal 样式里，靠直接设置 run 实现
+    封面大标题、落款、正文等不同外观。此时「正文只有一种正确格式」的假设
+    不成立，需要允许多种基准。
+
+    min_count 默认 1：即便是只出现一次的段落（封面主标题、落款），
+    只要它在基准文档中存在，就视为一种合法格式。宁可放宽，避免把
+    基准文档自身判为不合格。
+    """
+    body = [p for p in paras if p.text and not p.is_heading]
+    if not body:
+        return []
+
+    def key(p):
+        return (p.font_name, p.font_size, p.alignment, p.first_line_indent)
+
+    counts: dict = {}
+    for p in body:
+        counts.setdefault(key(p), []).append(p)
+
+    clusters = []
+    for k, items in sorted(counts.items(), key=lambda kv: -len(kv[1])):
+        if len(items) < min_count:
+            continue
+        best = items[0]
+        clusters.append(
+            {
+                "font_name": best.font_name,
+                "font_name_latin": best.font_name_latin,
+                "font_size": best.font_size,
+                "bold": best.bold,
+                "alignment": best.alignment,
+                "line_spacing": best.line_spacing,
+                "space_before": best.space_before,
+                "space_after": best.space_after,
+                "first_line_indent": best.first_line_indent,
+                "sample_text": best.text,
+                "count": len(items),
+            }
+        )
+    return clusters
+
+
 def summarize(paras: list[ParaFormat]) -> dict:
-    """归纳出各级标题与正文的代表格式。"""
+    """
+    归纳出各级标题与正文的代表格式。
+
+    说明：真实文档的「正文」往往包含封面标题、落款、图注等视觉差异很大的段落。
+    若统统归为「正文」取众数，会得到与实际不符的基准。
+    因此这里按「段落样式名」把正文再细分：
+        - 样式名为正文/Normal/None 的归入 body（真正的正文）
+        - 其他样式的归入 bodyGroups[样式名]
+    同时额外给出 bodyClusters（按实际格式聚类），供检查时做多基准匹配。
+    """
     headings: dict[int, list[ParaFormat]] = {}
     body: list[ParaFormat] = []
+    body_groups: dict[str, list[ParaFormat]] = {}
+
+    def normalize_style(name: Optional[str]) -> str:
+        if not name:
+            return "Normal"
+        low = name.strip()
+        return low
 
     for p in paras:
         if not p.text:
             continue
         if p.is_heading:
             headings.setdefault(p.outline_level, []).append(p)
-        else:
+            continue
+
+        style = normalize_style(p.style)
+        if style in ("Normal", "正文", "Body Text", "BodyText", "默认段落字体"):
             body.append(p)
+        else:
+            body_groups.setdefault(style, []).append(p)
 
     def most_common_format(items: list[ParaFormat]) -> dict:
         if not items:
@@ -440,11 +507,24 @@ def summarize(paras: list[ParaFormat]) -> dict:
             "first_line_indent": best.first_line_indent,
             "sample_text": best.text,
             "count": len(items),
+            "distinct_formats": len(counts),
         }
 
-    summary = {"headings": {}, "body": most_common_format(body)}
+    summary = {
+        "headings": {},
+        "body": most_common_format(body),
+        "bodyGroups": {},
+        "bodyClusters": body_format_clusters(paras),
+    }
     for level in sorted(headings):
         summary["headings"][level] = most_common_format(headings[level])
+
+    for style, items in body_groups.items():
+        fmt = most_common_format(items)
+        if fmt:
+            fmt["style_name"] = style
+            summary["bodyGroups"][style] = fmt
+
     return summary
 
 

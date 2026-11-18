@@ -1,4 +1,4 @@
-# 依赖
+﻿# 依赖
 node_modules/
 package-lock.json
 
@@ -21,3 +21,5 @@ desktop.ini
 
 # 语义审校缓存
 .cnlint-cache/
+# 真实文档演示产物（不提交用户文档）
+real-demo/

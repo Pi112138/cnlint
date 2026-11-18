@@ -18,21 +18,21 @@ const SCRIPTS_DIR = path.resolve(__dirname, '..', '..', 'scripts', 'docx');
 const CHECKER = path.join(SCRIPTS_DIR, 'check_docx_format.py');
 const FIXER = path.join(SCRIPTS_DIR, 'fix_docx_format.py');
 
-/** 常见候选解释器名，按优先级 */
-const CANDIDATES = [
-  process.env.CNLINT_PYTHON, // 用户显式指定
-  'python',
-  'python3',
-  'py',
-];
+/** 默认候选解释器名（按优先级），CNLINT_PYTHON 在运行时动态读取 */
+const DEFAULT_CANDIDATES = ['python', 'python3', 'py'];
 
 /**
  * 在系统 PATH 里探测可用的 Python 解释器（不校验依赖）。
+ *
+ * 每次都重新读取 CNLINT_PYTHON，避免模块加载时缓存导致环境变量变更不生效。
+ *
+ * @param {string[]} [candidates]
  * @returns {string[]} 可执行的候选列表
  */
-export function findPythons(candidates = CANDIDATES) {
+export function findPythons(candidates) {
+  const list = candidates ?? [process.env.CNLINT_PYTHON, ...DEFAULT_CANDIDATES];
   const found = [];
-  for (const exe of candidates) {
+  for (const exe of list) {
     if (!exe) continue;
     try {
       const r = spawnSync(exe, ['--version'], { encoding: 'utf8', timeout: 10000 });

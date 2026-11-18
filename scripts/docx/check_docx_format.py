@@ -108,7 +108,13 @@ def build_rules_from_docx(spec_path: str) -> dict:
     paras = extract_format(spec_path)
     summary = summarize(paras)
 
-    rules = {"headings": {}, "body": None, "source": f"DOCX:{Path(spec_path).name}"}
+    rules = {
+        "headings": {},
+        "body": None,
+        "bodyGroups": {},
+        "bodyClusters": [],
+        "source": f"DOCX:{Path(spec_path).name}",
+    }
 
     for level, fmt in summary["headings"].items():
         rules["headings"][int(level)] = {k: fmt.get(k) for k in FIELDS}
@@ -116,6 +122,15 @@ def build_rules_from_docx(spec_path: str) -> dict:
     body = summary["body"]
     if body:
         rules["body"] = {k: body.get(k) for k in FIELDS}
+
+    # 非标准样式的段落（封面、落款、图注等）按样式名单独出规则
+    for style, fmt in (summary.get("bodyGroups") or {}).items():
+        rules["bodyGroups"][style] = {k: fmt.get(k) for k in FIELDS}
+
+    # 正文的多基准：文档若存在多种常见正文格式（封面/落款/正文），
+    # 待检测段落只要匹配其中一种即算合格
+    for fmt in summary.get("bodyClusters") or []:
+        rules["bodyClusters"].append({k: fmt.get(k) for k in FIELDS})
 
     return rules
 
@@ -164,6 +179,28 @@ def build_rules_from_json(json_path: str) -> dict:
     return rules
 
 
+def _count_mismatches(p, expected: dict) -> list:
+    """返回段落 p 相对于 expected 的差异列表。"""
+    out = []
+    for field_name, label in FIELDS.items():
+        exp = expected.get(field_name)
+        act = getattr(p, field_name, None)
+        if not _equal(field_name, exp, act):
+            out.append((label, exp, act))
+    return out
+
+
+def _best_cluster(p, clusters: list[dict]) -> dict:
+    """在多个正文基准中选出与 p 差异最小的那个。"""
+    best = clusters[0]
+    best_n = len(_count_mismatches(p, best))
+    for c in clusters[1:]:
+        n = len(_count_mismatches(p, c))
+        if n < best_n:
+            best, best_n = c, n
+    return best
+
+
 def check(target_path: str, rules: dict) -> dict:
     """按规则检查目标文档。"""
     paras = extract_format(target_path)
@@ -172,6 +209,8 @@ def check(target_path: str, rules: dict) -> dict:
     total_mismatch = 0
     ok_count = 0
 
+    clusters = rules.get("bodyClusters") or []
+
     for p in paras:
         if not p.text:
             continue
@@ -179,21 +218,37 @@ def check(target_path: str, rules: dict) -> dict:
         if p.is_heading and p.outline_level in rules["headings"]:
             expected = rules["headings"][p.outline_level]
             role = LEVEL_NAMES.get(p.outline_level, f"{p.outline_level + 1}级标题")
-        elif not p.is_heading and rules.get("body"):
-            expected = rules["body"]
-            role = "正文"
+        elif not p.is_heading:
+            # 非标题段落：优先按段落样式名匹配专属规则（封面、落款、图注等），
+            # 找不到再用通用正文规则
+            style_key = (p.style or "").strip()
+            groups = rules.get("bodyGroups") or {}
+            if style_key and style_key in groups:
+                expected = groups[style_key]
+                role = f"正文({style_key})"
+            elif clusters:
+                # 多基准：只要命中任一簇即算合格，否则选差异最小的作为期望
+                perfect = [c for c in clusters if not _count_mismatches(p, c)]
+                if perfect:
+                    ok_count += 1
+                    results.append(
+                        ParaCheck(p.index, p.text, "正文", True, [])
+                    )
+                    continue
+                expected = _best_cluster(p, clusters)
+                role = "正文"
+            elif rules.get("body"):
+                expected = rules["body"]
+                role = "正文"
+            else:
+                continue
         else:
-            # 没有对应规则的段落跳过
+            # 标题但没有对应级别的规则，跳过
             continue
 
         mismatches = []
-        for field_name, label in FIELDS.items():
-            exp = expected.get(field_name)
-            act = getattr(p, field_name, None)
-            if not _equal(field_name, exp, act):
-                mismatches.append(
-                    Mismatch(p.index, p.text, role, label, exp, act)
-                )
+        for label, exp, act in _count_mismatches(p, expected):
+            mismatches.append(Mismatch(p.index, p.text, role, label, exp, act))
 
         if mismatches:
             total_mismatch += len(mismatches)

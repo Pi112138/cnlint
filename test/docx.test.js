@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+﻿import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { detectBinaryType } from '../src/linter.js';
 import {
@@ -93,10 +93,11 @@ test('dependencyHelp 输出包含安装步骤', () => {
 
 test('runChecker 在 Python 不可用时不抛异常，返回退出码 3', () => {
   const savedPath = process.env.PATH;
-  const saved = process.env.CNLINT_PYTHON;
-  try {
-    process.env.PATH = '';
-    delete process.env.CNLINT_PYTHON;
+    const saved = process.env.CNLINT_PYTHON;
+    try {
+      process.env.PATH = "";
+      delete process.env.CNLINT_PYTHON;
+      // 同时清掉候选列表中的生效值，确保真正模拟「无 Python」环境
     const r = runChecker(['no-such.docx', '--profile']);
     assert.equal(r.code, 3);
     assert.ok(r.hints && r.hints.length > 0);
@@ -109,10 +110,11 @@ test('runChecker 在 Python 不可用时不抛异常，返回退出码 3', () =>
 
 test('runFixer 在 Python 不可用时不抛异常，返回退出码 3', () => {
   const savedPath = process.env.PATH;
-  const saved = process.env.CNLINT_PYTHON;
-  try {
-    process.env.PATH = '';
-    delete process.env.CNLINT_PYTHON;
+    const saved = process.env.CNLINT_PYTHON;
+    try {
+      process.env.PATH = "";
+      delete process.env.CNLINT_PYTHON;
+      // 同时清掉候选列表中的生效值，确保真正模拟「无 Python」环境
     const r = runFixer(['no-such.docx', 'no-such.json']);
     assert.equal(r.code, 3);
     assert.ok(r.hints && r.hints.length > 0);
@@ -146,4 +148,27 @@ test('格式提取脚本按字号换算首行缩进', () => {
   const profiler = readFileSync(path.join(ROOT, 'scripts', 'docx', 'format_profile.py'), 'utf8');
   // 应使用 twips / 20 / 字号 的换算方式
   assert.ok(profiler.includes('twips / 20.0') || profiler.includes('twips/20.0'));
+});
+
+test('bridge 每次调用都重新读取 CNLINT_PYTHON 环境变量', () => {
+  const src = readFileSync(path.join(ROOT, 'src', 'docx', 'bridge.js'), 'utf8');
+  // 不能在模块顶层缓存环境变量
+  assert.equal(
+    /^const CANDIDATES = \[/m.test(src),
+    false,
+    '不应在模块加载时缓存 CNLINT_PYTHON',
+  );
+  assert.ok(src.includes('process.env.CNLINT_PYTHON'));
+});
+
+test('格式提取脚本支持正文多基准聚类', () => {
+  const profiler = readFileSync(path.join(ROOT, 'scripts', 'docx', 'format_profile.py'), 'utf8');
+  assert.ok(profiler.includes('def body_format_clusters'));
+  assert.ok(profiler.includes('bodyClusters'));
+});
+
+test('检查脚本按多基准匹配正文', () => {
+  const checker = readFileSync(path.join(ROOT, 'scripts', 'docx', 'check_docx_format.py'), 'utf8');
+  assert.ok(checker.includes('bodyClusters'));
+  assert.ok(checker.includes('_best_cluster'));
 });
