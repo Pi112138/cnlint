@@ -16,6 +16,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 本文件位于 <root>/src/docx/bridge.js，上溯两级即项目根
 const SCRIPTS_DIR = path.resolve(__dirname, '..', '..', 'scripts', 'docx');
 const CHECKER = path.join(SCRIPTS_DIR, 'check_docx_format.py');
+const FIXER = path.join(SCRIPTS_DIR, 'fix_docx_format.py');
 
 /** 常见候选解释器名，按优先级 */
 const CANDIDATES = [
@@ -96,13 +97,24 @@ export function resolvePython() {
  * @returns {{ ok: boolean, code: number, stdout: string, stderr: string, hints?: string[] }}
  */
 export function runChecker(args, options = {}) {
+  return runScript(CHECKER, args, options);
+}
+
+/**
+ * 通用脚本执行。
+ *
+ * @param {string} script 脚本绝对路径
+ * @param {string[]} args
+ * @param {object} [options]
+ */
+function runScript(script, args, options = {}) {
   const { exe, hints } = options.python ? { exe: options.python, hints: [] } : resolvePython();
 
   if (!exe) {
     return { ok: false, code: 3, stdout: '', stderr: '未找到可用的 Python 环境', hints };
   }
 
-  const r = spawnSync(exe, [CHECKER, ...args], {
+  const r = spawnSync(exe, [script, ...args], {
     encoding: 'utf8',
     maxBuffer: 20 * 1024 * 1024,
     env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
@@ -114,6 +126,17 @@ export function runChecker(args, options = {}) {
     stdout: r.stdout || '',
     stderr: r.stderr || '',
   };
+}
+
+/**
+ * 调用 Python 修正脚本。
+ *
+ * @param {string[]} args 传给 fix_docx_format.py 的参数
+ * @param {object} [options]
+ * @returns {{ ok: boolean, code: number, stdout: string, stderr: string, hints?: string[] }}
+ */
+export function runFixer(args, options = {}) {
+  return runScript(FIXER, args, options);
 }
 
 /**

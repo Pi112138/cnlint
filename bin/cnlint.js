@@ -16,7 +16,7 @@ import { fixText } from '../src/fixer.js';
 import { createProvider, configFromEnv } from '../src/llm/provider.js';
 import { reviewIssues, isSemanticCandidate } from '../src/llm/semantic.js';
 import { createMemoryCache, withCache } from '../src/llm/cache.js';
-import { runChecker, dependencyHelp, resolvePython } from '../src/docx/bridge.js';
+import { runChecker, runFixer, dependencyHelp, resolvePython } from '../src/docx/bridge.js';
 import {
   collectFiles,
   loadConfig,
@@ -516,23 +516,37 @@ export async function runDocx(argv, io = {}) {
 
   if (argv.length === 0 || argv.includes('-h') || argv.includes('--help')) {
     stdout(
-      `cnlint docx — Word 文档格式检查
+      `cnlint docx — Word 文档格式检查与修正
 
 用法
-  cnlint docx <待检测.docx> --spec <格式要求.docx>   用另一份文档作为格式标准
-  cnlint docx <待检测.docx> --rules <rules.json>     用 JSON 文件写格式要求
-  cnlint docx <文档.docx> --profile                  查看文档当前的格式
+  cnlint docx <待检测.docx> --spec <格式要求.docx>    用另一份文档作为格式标准
+  cnlint docx <待检测.docx> --rules <rules.json>      用 JSON 文件写格式要求
+  cnlint docx <文档.docx> --profile                   查看文档当前的格式
 
-可检查项
+修正格式
+  -f, --fix            自动把不符合要求的格式改成正确的（会先备份原文件）
+  -n, --dry-run        配合 --fix：只预览将要做哪些修改，不写入
+
+可检查并修正的项
   中文字体、字号、加粗、对齐方式、行距、段前后间距、首行缩进
+
+示例
+  # 1. 先检查，看哪里不符合
+  cnlint docx 报告.docx --spec 模板.docx
+
+  # 2. 预览会怎么改
+  cnlint docx 报告.docx --spec 模板.docx --fix --dry-run
+
+  # 3. 确认后真正修正（自动备份为 报告.bak.docx）
+  cnlint docx 报告.docx --spec 模板.docx --fix
 
 说明
   本功能依赖 Python 与 python-docx，首次使用请执行：
     pip install python-docx
 
 退出码
-  0  全部符合要求
-  1  存在不符合的段落
+  0  全部符合要求 / 修正成功
+  1  存在不符合的段落（未修正）
   2  参数错误
   3  环境不可用（缺少 Python 或 python-docx）
 `,
@@ -541,8 +555,15 @@ export async function runDocx(argv, io = {}) {
   }
 
   const target = argv[0];
-  const rest = argv.slice(1);
+  let rest = argv.slice(1);
 
+  const doFix = rest.includes('-f') || rest.includes('--fix');
+  const dryRun = rest.includes('-n') || rest.includes('--dry-run');
+
+  // 从传给 Python 的参数中剔除 cnlint 自己的开关
+  rest = rest.filter((a) => !['-f', '--fix', '-n', '--dry-run'].includes(a));
+
+  // ---- 1) 先检查 ----
   const r = runChecker([target, ...rest], { python: io.python });
 
   if (r.hints && r.hints.length > 0 && r.code === 3) {
@@ -553,8 +574,49 @@ export async function runDocx(argv, io = {}) {
   if (r.stdout) stdout(r.stdout);
   if (r.stderr) stderr(r.stderr);
 
-  // Python 脚本用 1 表示「有不符项」，与 cnlint 语义一致，直接透传
-  return r.code;
+  // 不做修正时，直接透传检查退出码
+  if (!doFix) {
+    return r.code;
+  }
+
+  // ---- 2) 需要修正 ----
+  const reportPath = path.resolve(
+    path.dirname(path.resolve(target)),
+    `${path.basename(target, path.extname(target))}.check.json`,
+  );
+
+  if (r.code !== 1) {
+    // 没有不符项，或检查本身失败，就没有可修的内容
+    if (dryRun) stdout('\n（没有需要修正的内容）\n');
+    return r.code;
+  }
+
+  stdout('\n' + '─'.repeat(60) + '\n');
+
+  const fixArgs = [target, reportPath];
+  if (!dryRun) fixArgs.push('--write');
+
+  const f = runFixer(fixArgs, { python: io.python });
+
+  if (f.code === 3) {
+    stderr(`${dependencyHelp(f.hints ?? ['修正脚本执行失败'])}\n`);
+    return 3;
+  }
+
+  if (f.stdout) stdout(`🔧 ${f.stdout.trim()}\n`);
+  if (f.stderr) stderr(f.stderr);
+
+  if (dryRun) {
+    stdout('\n提示：以上为预览。确认无误后去掉 --dry-run 即可真正写入。\n');
+    return 1;
+  }
+
+  // ---- 3) 修正后复检 ----
+  stdout('\n' + '─'.repeat(60) + '\n复检中……\n');
+  const again = runChecker([target, ...rest], { python: io.python });
+  if (again.stdout) stdout(again.stdout);
+
+  return again.code;
 }
 
 // 直接执行时运行

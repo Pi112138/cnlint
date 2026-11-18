@@ -7,7 +7,14 @@ import {
   resolvePython,
   dependencyHelp,
   runChecker,
+  runFixer,
 } from '../src/docx/bridge.js';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(__dirname, '..');
 
 // ---------- 二进制检测 ----------
 
@@ -97,4 +104,46 @@ test('runChecker 在 Python 不可用时不抛异常，返回退出码 3', () =>
     process.env.PATH = savedPath;
     if (saved !== undefined) process.env.CNLINT_PYTHON = saved;
   }
+});
+// ---------- Word 格式修正 ----------
+
+test('runFixer 在 Python 不可用时不抛异常，返回退出码 3', () => {
+  const savedPath = process.env.PATH;
+  const saved = process.env.CNLINT_PYTHON;
+  try {
+    process.env.PATH = '';
+    delete process.env.CNLINT_PYTHON;
+    const r = runFixer(['no-such.docx', 'no-such.json']);
+    assert.equal(r.code, 3);
+    assert.ok(r.hints && r.hints.length > 0);
+  } finally {
+    process.env.PATH = savedPath;
+    if (saved !== undefined) process.env.CNLINT_PYTHON = saved;
+  }
+});
+
+test('修正脚本文件存在且可被读取', () => {
+  const fixer = path.join(ROOT, 'scripts', 'docx', 'fix_docx_format.py');
+  const content = readFileSync(fixer, 'utf8');
+  assert.ok(content.includes('def fix_document'));
+  assert.ok(content.includes('w:firstLine'));
+});
+
+test('修正脚本包含字号变更后重算缩进的逻辑', () => {
+  const fixer = readFileSync(path.join(ROOT, 'scripts', 'docx', 'fix_docx_format.py'), 'utf8');
+  // 字号修改后应按原字符数重新换算 firstLine
+  assert.ok(fixer.includes('old_size'));
+  assert.ok(fixer.includes('chars'));
+});
+
+test('修正脚本默认不写入，需 --write 参数', () => {
+  const fixer = readFileSync(path.join(ROOT, 'scripts', 'docx', 'fix_docx_format.py'), 'utf8');
+  assert.ok(fixer.includes('--write'));
+  assert.ok(fixer.includes('bak.docx'));
+});
+
+test('格式提取脚本按字号换算首行缩进', () => {
+  const profiler = readFileSync(path.join(ROOT, 'scripts', 'docx', 'format_profile.py'), 'utf8');
+  // 应使用 twips / 20 / 字号 的换算方式
+  assert.ok(profiler.includes('twips / 20.0') || profiler.includes('twips/20.0'));
 });

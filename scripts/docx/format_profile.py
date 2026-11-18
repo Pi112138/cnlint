@@ -286,26 +286,46 @@ def _resolve_space(paragraph, which: str) -> Optional[float]:
 
 
 def _first_line_indent_chars(paragraph) -> Optional[float]:
-    """首行缩进（以「字符」为单位，1 字符约等于当前字号）。"""
-    def conv(pf, size_pt):
-        fli = pf.first_line_indent
-        if fli is None:
-            return None
-        try:
-            pt = float(fli.pt)
-        except Exception:
-            return None
-        if (size_pt or 0) <= 0:
-            return None
-        return round(pt / size_pt, 2)
+    """
+    首行缩进，以「字符」为单位。
 
+    换算依据是 w:ind/@w:firstLine（twips）除以当前字号：
+        480 twips = 24pt，12pt 字体 → 2 字符
+    这与 Word 界面显示的「2 字符」一致。
+
+    注意：不优先采用 firstLineChars 属性——Word 保存时会按自身规则
+    重算该值，可能与 fistLine 不等（例如 481 twips 被记为 229），
+    直接读它会引入偏差。
+    """
     size = _resolve_size_for_paragraph(paragraph)
-    v = conv(paragraph.paragraph_format, size)
+
+    def from_xml(ppr) -> Optional[float]:
+        if ppr is None:
+            return None
+        ind = ppr.find(f"{W}ind")
+        if ind is None:
+            return None
+        twips_attr = ind.get(f"{W}firstLine")
+        if twips_attr is not None:
+            try:
+                twips = int(twips_attr)
+            except Exception:
+                return None
+            if (size or 0) <= 0:
+                return None
+            # 1pt = 20twips；字符数 = (twips/20) / 字号
+            return round((twips / 20.0) / size, 2)
+        return None
+
+    # 1) 段落直接设置
+    v = from_xml(paragraph._element.find(f"{W}pPr"))
     if v is not None:
         return v
+
+    # 2) 样式链
     for style in _style_chain(paragraph):
         try:
-            v = conv(style.paragraph_format, size)
+            v = from_xml(style.element.find(f"{W}pPr"))
             if v is not None:
                 return v
         except Exception:
